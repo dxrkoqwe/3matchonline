@@ -411,17 +411,62 @@ function dropSegment(g, c, from, to, types) {
   while (write >= from) { g[write][c] = makeTile(randInt(types)); write--; }
 }
 
+// НОВЫЙ reshuffle — реально двигает плитки по полю, а не перекрашивает их на месте
 function reshuffle(grid, types) {
-  const movable = [];
-  const colors = [];
+  const positions = [];
+  const tiles = [];
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
     const t = grid[r][c];
-    if (!t.stone && !t.rainbow && !t.bomb) { movable.push([r,c]); colors.push(t.type); }
+    if (!t.stone && !t.rainbow && !t.bomb) { positions.push([r,c]); tiles.push(t); }
   }
+  for (let attempt = 0; attempt < 40; attempt++) {
+    shuffle(tiles);
+    const g = grid.map(row => row.slice());
+    positions.forEach(([r,c], i) => {
+      g[r][c] = { ...tiles[i], matching: false };
+    });
+    if (findMatches(g).size === 0 && hasAnyMove(g)) return g;
+  }
+  // fallback — перекраска на месте
+  const colors = positions.map(([r,c]) => grid[r][c].type);
   shuffle(colors);
   const g = grid.map(row => row.slice());
-  movable.forEach(([r,c], i) => { g[r][c] = {...grid[r][c], type: colors[i], matching:false}; });
-  return findMatches(g).size === 0 ? g : grid;
+  positions.forEach(([r,c], i) => {
+    g[r][c] = { ...grid[r][c], type: colors[i], matching: false };
+  });
+  return g;
+}
+
+// ===== TOAST =====
+function showToast(text, duration = 1600) {
+  const existing = document.getElementById('toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'toast';
+  toast.textContent = text;
+  Object.assign(toast.style, {
+    position: 'fixed',
+    left: '50%',
+    bottom: '28%',
+    transform: 'translateX(-50%)',
+    background: 'rgba(179,136,255,0.95)',
+    color: '#1A0E2E',
+    padding: '12px 22px',
+    borderRadius: '24px',
+    fontWeight: '700',
+    fontSize: '15px',
+    zIndex: '200',
+    pointerEvents: 'none',
+    opacity: '0',
+    transition: 'opacity 0.3s',
+    boxShadow: '0 6px 20px rgba(0,0,0,0.4)',
+  });
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => { toast.style.opacity = '1'; });
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 400);
+  }, duration);
 }
 
 // ===== GAME ENGINE =====
@@ -514,7 +559,7 @@ class GameEngine {
     try {
       const tileA = this.grid[a[0]][a[1]];
       const tileB = this.grid[b[0]][b[1]];
-      // Радуга активируется при любом свайпе (color bomb)
+      // Радуга активируется при любом свайпе
       if (tileA.rainbow || tileB.rainbow) {
         this.movesLeft--;
         const rainbowPos = tileA.rainbow ? a : b;
@@ -604,7 +649,6 @@ class GameEngine {
       if (bombAt) bombId = this.grid[bombAt[0]][bombAt[1]].id;
 
       const toRemove = new Set(matches);
-      // Если в матче есть бомба — расширяем зону на 3×3
       for (const key of [...toRemove]) {
         const [r, c] = key.split(',').map(Number);
         if (this.grid[r][c].bomb) {
@@ -613,7 +657,6 @@ class GameEngine {
               if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) toRemove.add(`${rr},${cc}`);
         }
       }
-      // Сохраняем спец-фишки от удаления
       if (rainbowId) for (const k of [...toRemove]) {
         const [r,c] = k.split(',').map(Number);
         if (this.grid[r][c].id === rainbowId) toRemove.delete(k);
@@ -684,10 +727,18 @@ class GameEngine {
       }
       await sleep(340);
 
+      // Если нет ходов — перемешиваем
       let rs = 0;
+      let didReshuffle = false;
       while (!hasAnyMove(this.grid) && rs < 8) {
+        const before = this.grid;
         this.grid = reshuffle(this.grid, this.level.types);
+        if (this.grid !== before) didReshuffle = true;
         rs++;
+      }
+      if (didReshuffle) {
+        showToast('Нет ходов — перемешиваю!');
+        await sleep(500);
       }
     }
   }
@@ -729,7 +780,8 @@ class GameEngine {
     this.isAnimating = true;
     try {
       this.grid = reshuffle(this.grid, this.level.types);
-      await sleep(300);
+      showToast('Перемешано!');
+      await sleep(400);
     } finally { this.isAnimating = false; }
   }
 
@@ -1088,6 +1140,12 @@ function el(tag, props = {}, children = []) {
   return e;
 }
 
+// Цветной ромбик для цели по цвету
+function colorDiamondHtml(typeIndex) {
+  const t = TILE_TYPES[typeIndex % TILE_TYPES.length];
+  return `<span style="color:${t.color}; text-shadow:0 0 6px ${t.color};">◆</span>`;
+}
+
 function showMap() {
   if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
   if (currentEngine) { currentEngine.stopAnimationLoop(); currentEngine = null; }
@@ -1126,11 +1184,15 @@ function showMap() {
     if (unlocked) {
       card.appendChild(el('div', { className: 'num', text: String(lvl.id) }));
       card.appendChild(el('div', { className: 'stars', text: '★'.repeat(stars) + '☆'.repeat(3-stars) }));
-      let goalText = '';
-      if (lvl.goal === 'color') goalText = `◆ ${lvl.count}`;
-      else if (lvl.goal === 'ice') goalText = '❄ лёд';
-      else if (lvl.goal === 'heart') goalText = `❤ ${lvl.count}`;
-      if (goalText) card.appendChild(el('div', { className: 'goal', text: goalText }));
+      let goalHtml = '';
+      if (lvl.goal === 'color' && lvl.color != null) {
+        goalHtml = `${colorDiamondHtml(lvl.color)} ${lvl.count}`;
+      } else if (lvl.goal === 'ice') {
+        goalHtml = '❄ лёд';
+      } else if (lvl.goal === 'heart') {
+        goalHtml = `❤ ${lvl.count}`;
+      }
+      if (goalHtml) card.appendChild(el('div', { className: 'goal', html: goalHtml }));
     } else {
       card.appendChild(el('div', { className: 'num', text: '🔒' }));
     }
@@ -1227,8 +1289,8 @@ function updateStats() {
   let goalBlock = '';
   if (!lvl.goal || lvl.goal === 'score') {
     goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">${e.score} / ${lvl.target}</div></div>`;
-  } else if (lvl.goal === 'color') {
-    goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">◆ ${e.goalProgress} / ${lvl.count}</div></div>`;
+  } else if (lvl.goal === 'color' && lvl.color != null) {
+    goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">${colorDiamondHtml(lvl.color)} ${e.goalProgress} / ${lvl.count}</div></div>`;
   } else if (lvl.goal === 'ice') {
     const remaining = e.ice.flat().reduce((a,b)=>a+b,0);
     goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">❄ ${e.totalIceCount - remaining} / ${e.totalIceCount}</div></div>`;
