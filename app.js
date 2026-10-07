@@ -173,7 +173,7 @@ function shuffle(a) { for (let i=a.length-1; i>0; i--) { const j = Math.floor(Ma
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function makeTile(type) {
-  return { id: nextId(), type, matching:false, locked:false, stone:false, hasHeart:false, rainbow:false, bomb:false };
+  return { id: nextId(), type, matching:false, locked:false, stone:false, hasHeart:false, rainbow:false, bomb:false, rocket:false };
 }
 
 function generateGrid(types) {
@@ -271,6 +271,21 @@ function findFiveInRow(grid) {
       if (r2 - r >= 5) return [Math.floor((r + r2 - 1) / 2), c];
       r = r2;
     }
+  }
+  return null;
+}
+
+function findLShape(grid) {
+  for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
+    const t = grid[r][c];
+    if (t.stone) continue;
+    let hLen = 1;
+    let cc = c-1; while (cc >= 0 && !grid[r][cc].stone && grid[r][cc].type === t.type) { hLen++; cc--; }
+    cc = c+1; while (cc < SIZE && !grid[r][cc].stone && grid[r][cc].type === t.type) { hLen++; cc++; }
+    let vLen = 1;
+    let rr = r-1; while (rr >= 0 && !grid[rr][c].stone && grid[rr][c].type === t.type) { vLen++; rr--; }
+    rr = r+1; while (rr < SIZE && !grid[rr][c].stone && grid[rr][c].type === t.type) { vLen++; rr++; }
+    if (hLen >= 3 && vLen >= 3) return [r, c];
   }
   return null;
 }
@@ -411,13 +426,12 @@ function dropSegment(g, c, from, to, types) {
   while (write >= from) { g[write][c] = makeTile(randInt(types)); write--; }
 }
 
-// НОВЫЙ reshuffle — реально двигает плитки по полю, а не перекрашивает их на месте
 function reshuffle(grid, types) {
   const positions = [];
   const tiles = [];
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
     const t = grid[r][c];
-    if (!t.stone && !t.rainbow && !t.bomb) { positions.push([r,c]); tiles.push(t); }
+    if (!t.stone && !t.rainbow && !t.bomb && !t.rocket) { positions.push([r,c]); tiles.push(t); }
   }
   for (let attempt = 0; attempt < 40; attempt++) {
     shuffle(tiles);
@@ -427,7 +441,6 @@ function reshuffle(grid, types) {
     });
     if (findMatches(g).size === 0 && hasAnyMove(g)) return g;
   }
-  // fallback — перекраска на месте
   const colors = positions.map(([r,c]) => grid[r][c].type);
   shuffle(colors);
   const g = grid.map(row => row.slice());
@@ -445,21 +458,11 @@ function showToast(text, duration = 1600) {
   toast.id = 'toast';
   toast.textContent = text;
   Object.assign(toast.style, {
-    position: 'fixed',
-    left: '50%',
-    bottom: '28%',
-    transform: 'translateX(-50%)',
-    background: 'rgba(179,136,255,0.95)',
-    color: '#1A0E2E',
-    padding: '12px 22px',
-    borderRadius: '24px',
-    fontWeight: '700',
-    fontSize: '15px',
-    zIndex: '200',
-    pointerEvents: 'none',
-    opacity: '0',
-    transition: 'opacity 0.3s',
-    boxShadow: '0 6px 20px rgba(0,0,0,0.4)',
+    position: 'fixed', left: '50%', bottom: '28%', transform: 'translateX(-50%)',
+    background: 'rgba(179,136,255,0.95)', color: '#1A0E2E',
+    padding: '12px 22px', borderRadius: '24px', fontWeight: '700', fontSize: '15px',
+    zIndex: '200', pointerEvents: 'none', opacity: '0',
+    transition: 'opacity 0.3s', boxShadow: '0 6px 20px rgba(0,0,0,0.4)',
   });
   document.body.appendChild(toast);
   requestAnimationFrame(() => { toast.style.opacity = '1'; });
@@ -489,6 +492,7 @@ class GameEngine {
     this.iceBrokenSession = 0;
     this.rainbowsSession = 0;
     this.bombsSession = 0;
+    this.rocketsSession = 0;
     this.maxCascade = 0;
     this.usedBooster = false;
     this.visuals = new Map();
@@ -559,7 +563,6 @@ class GameEngine {
     try {
       const tileA = this.grid[a[0]][a[1]];
       const tileB = this.grid[b[0]][b[1]];
-      // Радуга активируется при любом свайпе
       if (tileA.rainbow || tileB.rainbow) {
         this.movesLeft--;
         const rainbowPos = tileA.rainbow ? a : b;
@@ -622,6 +625,7 @@ class GameEngine {
       this.goalProgress += count;
     }
     this.score += affected.size * 25;
+    updateStats();
     this.grid = markMatching(this.grid, affected);
     await sleep(320);
     this.grid = dropAndRefill(this.grid, affected, this.level.types);
@@ -641,20 +645,28 @@ class GameEngine {
 
       const rainbowAt = findFiveInRow(this.grid);
       const bombAt = rainbowAt ? null : findFourInRow(this.grid);
+      const rocketAt = (rainbowAt || bombAt) ? null : findLShape(this.grid);
       if (rainbowAt) this.rainbowsSession++;
       if (bombAt) this.bombsSession++;
+      if (rocketAt) this.rocketsSession++;
 
-      let rainbowId = null, bombId = null;
+      let rainbowId = null, bombId = null, rocketId = null;
       if (rainbowAt) rainbowId = this.grid[rainbowAt[0]][rainbowAt[1]].id;
       if (bombAt) bombId = this.grid[bombAt[0]][bombAt[1]].id;
+      if (rocketAt) rocketId = this.grid[rocketAt[0]][rocketAt[1]].id;
 
       const toRemove = new Set(matches);
       for (const key of [...toRemove]) {
         const [r, c] = key.split(',').map(Number);
-        if (this.grid[r][c].bomb) {
+        const tile = this.grid[r][c];
+        if (tile.bomb) {
           for (let rr=r-1; rr<=r+1; rr++)
             for (let cc=c-1; cc<=c+1; cc++)
               if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) toRemove.add(`${rr},${cc}`);
+        }
+        if (tile.rocket) {
+          for (let cc=0; cc<SIZE; cc++) toRemove.add(`${r},${cc}`);
+          for (let rr=0; rr<SIZE; rr++) toRemove.add(`${rr},${c}`);
         }
       }
       if (rainbowId) for (const k of [...toRemove]) {
@@ -664,6 +676,10 @@ class GameEngine {
       if (bombId) for (const k of [...toRemove]) {
         const [r,c] = k.split(',').map(Number);
         if (this.grid[r][c].id === bombId) toRemove.delete(k);
+      }
+      if (rocketId) for (const k of [...toRemove]) {
+        const [r,c] = k.split(',').map(Number);
+        if (this.grid[r][c].id === rocketId) toRemove.delete(k);
       }
 
       const newIce = this.ice.map(r => r.slice());
@@ -704,6 +720,7 @@ class GameEngine {
       }
       const basePoints = toRemove.size * 10 + iceBroken * 15 + unlocks.size * 5 + heartsCleared * 20;
       this.score += Math.round(basePoints * multiplier);
+      updateStats();
 
       this.grid = markMatching(this.grid, toRemove);
       if (unlocks.size > 0) this.grid = unlockCells(this.grid, unlocks);
@@ -725,9 +742,15 @@ class GameEngine {
         }
         this.grid = g;
       }
+      if (rocketId) {
+        const g = this.grid.map(r => r.slice());
+        for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
+          if (g[r][c].id === rocketId) g[r][c] = {...g[r][c], rocket:true, matching:false};
+        }
+        this.grid = g;
+      }
       await sleep(340);
 
-      // Если нет ходов — перемешиваем
       let rs = 0;
       let didReshuffle = false;
       while (!hasAnyMove(this.grid) && rs < 8) {
@@ -839,6 +862,7 @@ class GameEngine {
     this.iceBrokenSession = 0;
     this.rainbowsSession = 0;
     this.bombsSession = 0;
+    this.rocketsSession = 0;
     this.maxCascade = 0;
     this.totalIceCount = this.ice.flat().reduce((a,b) => a+b, 0);
     this.visuals.clear();
@@ -943,6 +967,88 @@ function drawBombIcon(x, y, size) {
   ctx.beginPath();
   ctx.arc(cx - s*0.13, cy + s*0.02, s*0.08, 0, Math.PI*2);
   ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
+  ctx.restore();
+}
+
+function drawRocketIcon(x, y, size) {
+  const cx = x + size/2, cy = y + size/2;
+  const s = size * 0.62;
+  const bodyW = s * 0.42;
+  const bodyH = s * 0.72;
+  const bodyX = cx - bodyW / 2;
+  const bodyY = cy - bodyH / 2;
+  ctx.save();
+
+  // Нос (треугольник)
+  ctx.beginPath();
+  ctx.moveTo(cx, bodyY - s * 0.16);
+  ctx.lineTo(cx - bodyW/2, bodyY + s * 0.04);
+  ctx.lineTo(cx + bodyW/2, bodyY + s * 0.04);
+  ctx.closePath();
+  const noseGrad = ctx.createLinearGradient(bodyX, bodyY, bodyX + bodyW, bodyY);
+  noseGrad.addColorStop(0, '#FF5252');
+  noseGrad.addColorStop(1, '#B71C1C');
+  ctx.fillStyle = noseGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = size * 0.02;
+  ctx.stroke();
+
+  // Корпус
+  ctx.beginPath();
+  ctx.rect(bodyX, bodyY + s * 0.04, bodyW, bodyH - s * 0.04);
+  const bodyGrad = ctx.createLinearGradient(bodyX, 0, bodyX + bodyW, 0);
+  bodyGrad.addColorStop(0, '#BDBDBD');
+  bodyGrad.addColorStop(0.5, '#FFFFFF');
+  bodyGrad.addColorStop(1, '#757575');
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+  ctx.stroke();
+
+  // Иллюминатор
+  ctx.beginPath();
+  ctx.arc(cx, bodyY + bodyH * 0.34, bodyW * 0.30, 0, Math.PI * 2);
+  ctx.fillStyle = '#448AFF';
+  ctx.fill();
+  ctx.strokeStyle = '#0D47A1';
+  ctx.lineWidth = size * 0.02;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx - bodyW * 0.10, bodyY + bodyH * 0.28, bodyW * 0.10, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fill();
+
+  // Крылья
+  ctx.beginPath();
+  ctx.moveTo(bodyX, bodyY + bodyH - s * 0.16);
+  ctx.lineTo(bodyX - s * 0.16, bodyY + bodyH);
+  ctx.lineTo(bodyX, bodyY + bodyH);
+  ctx.closePath();
+  ctx.fillStyle = '#FF5252';
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(bodyX + bodyW, bodyY + bodyH - s * 0.16);
+  ctx.lineTo(bodyX + bodyW + s * 0.16, bodyY + bodyH);
+  ctx.lineTo(bodyX + bodyW, bodyY + bodyH);
+  ctx.closePath();
+  ctx.fillStyle = '#FF5252';
+  ctx.fill();
+  ctx.stroke();
+
+  // Пламя
+  ctx.beginPath();
+  ctx.moveTo(cx - bodyW * 0.34, bodyY + bodyH);
+  ctx.lineTo(cx, bodyY + bodyH + s * 0.22);
+  ctx.lineTo(cx + bodyW * 0.34, bodyY + bodyH);
+  ctx.closePath();
+  const flameGrad = ctx.createLinearGradient(cx, bodyY + bodyH, cx, bodyY + bodyH + s * 0.22);
+  flameGrad.addColorStop(0, '#FFD740');
+  flameGrad.addColorStop(1, '#FF5252');
+  ctx.fillStyle = flameGrad;
+  ctx.fill();
+
   ctx.restore();
 }
 
@@ -1110,6 +1216,7 @@ function render(engine) {
     } else {
       drawGem(x + pad, y + pad, size - pad*2, tile.type, tile.rainbow);
       if (tile.bomb) drawBombIcon(x + pad, y + pad, size - pad*2);
+      if (tile.rocket) drawRocketIcon(x + pad, y + pad, size - pad*2);
       if (tile.hasHeart) drawHeart(x + pad, y + pad, size - pad*2);
       if (tile.locked) drawLock(x + pad, y + pad, size - pad*2);
     }
@@ -1140,7 +1247,6 @@ function el(tag, props = {}, children = []) {
   return e;
 }
 
-// Цветной ромбик для цели по цвету
 function colorDiamondHtml(typeIndex) {
   const t = TILE_TYPES[typeIndex % TILE_TYPES.length];
   return `<span style="color:${t.color}; text-shadow:0 0 6px ${t.color};">◆</span>`;
@@ -1286,22 +1392,44 @@ function updateStats() {
   const stats = document.getElementById('statsRow');
   if (!stats) return;
   const lvl = e.level;
-  let goalBlock = '';
-  if (!lvl.goal || lvl.goal === 'score') {
-    goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">${e.score} / ${lvl.target}</div></div>`;
-  } else if (lvl.goal === 'color' && lvl.color != null) {
-    goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">${colorDiamondHtml(lvl.color)} ${e.goalProgress} / ${lvl.count}</div></div>`;
-  } else if (lvl.goal === 'ice') {
-    const remaining = e.ice.flat().reduce((a,b)=>a+b,0);
-    goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">❄ ${e.totalIceCount - remaining} / ${e.totalIceCount}</div></div>`;
-  } else if (lvl.goal === 'heart') {
-    goalBlock = `<div class="stat"><div class="label">Цель</div><div class="value">❤ ${e.goalProgress} / ${lvl.count}</div></div>`;
+
+  if (!stats.dataset.built) {
+    stats.dataset.built = '1';
+    stats.innerHTML = `
+      <div class="stat"><div class="label">Ходы</div><div class="value" id="valMoves">0</div></div>
+      <div class="stat"><div class="label">Очки</div><div class="value" id="valScore">0</div></div>
+      <div class="stat"><div class="label">Цель</div><div class="value" id="valGoal">0</div></div>
+    `;
   }
-  stats.innerHTML = `
-    <div class="stat"><div class="label">Ходы</div><div class="value">${e.movesLeft}</div></div>
-    <div class="stat"><div class="label">Очки</div><div class="value">${e.score}</div></div>
-    ${goalBlock}
-  `;
+
+  const movesEl = document.getElementById('valMoves');
+  if (movesEl && movesEl.textContent !== String(e.movesLeft)) movesEl.textContent = e.movesLeft;
+
+  const scoreEl = document.getElementById('valScore');
+  if (scoreEl) {
+    const prev = parseInt(scoreEl.textContent) || 0;
+    if (e.score !== prev) {
+      scoreEl.textContent = e.score;
+      if (e.score > prev) {
+        scoreEl.classList.remove('score-bump');
+        void scoreEl.offsetWidth;
+        scoreEl.classList.add('score-bump');
+      }
+    }
+  }
+
+  const goalEl = document.getElementById('valGoal');
+  if (goalEl) {
+    let goalHtml = '';
+    if (!lvl.goal || lvl.goal === 'score') goalHtml = `${e.score} / ${lvl.target}`;
+    else if (lvl.goal === 'color' && lvl.color != null) goalHtml = `${colorDiamondHtml(lvl.color)} ${e.goalProgress} / ${lvl.count}`;
+    else if (lvl.goal === 'ice') {
+      const remaining = e.ice.flat().reduce((a,b)=>a+b,0);
+      goalHtml = `❄ ${e.totalIceCount - remaining} / ${e.totalIceCount}`;
+    } else if (lvl.goal === 'heart') goalHtml = `❤ ${e.goalProgress} / ${lvl.count}`;
+    if (goalEl.innerHTML !== goalHtml) goalEl.innerHTML = goalHtml;
+  }
+
   const fill = document.getElementById('progressFill');
   if (fill) {
     let pv = 0;
@@ -1513,14 +1641,14 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ===== BOOT =====
-window.addEventListener('resize', () => {
-  if (currentEngine) { setupCanvas(); render(currentEngine); }
-});
-window.addEventListener('orientationchange', () => {
-  setTimeout(() => {
-    if (currentEngine) { setupCanvas(); render(currentEngine); }
-  }, 300);
-});
+// ===== RESIZE =====
+let resizeTimeout = null;
+function handleResize() {
+  if (resizeTimeout) clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => { if (currentEngine) { setupCanvas(); render(currentEngine); } }, 100);
+}
+window.addEventListener('resize', handleResize);
+window.addEventListener('orientationchange', () => { setTimeout(handleResize, 300); });
 
+// ===== BOOT =====
 showMap();

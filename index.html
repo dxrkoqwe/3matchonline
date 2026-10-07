@@ -14,10 +14,8 @@
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #1A0E2E; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #fff; }
 body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
-#app { position: fixed; inset: 0; display: flex; flex-direction: column; background: linear-gradient(180deg, #1A0E2E 0%, #2D1B4E 100%); }
+#app { position: fixed; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 560px; display: flex; flex-direction: column; overflow: hidden; background: linear-gradient(180deg, #1A0E2E 0%, #2D1B4E 100%); box-shadow: 0 0 60px rgba(0,0,0,0.5); }
 .screen { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-/* ===== MAP ===== */
 .map-screen { padding: 12px 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .map-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .map-title { font-size: 26px; font-weight: 900; letter-spacing: 4px; color: #B388FF; }
@@ -37,8 +35,6 @@ body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inse
 .level-card.normal { background: linear-gradient(135deg, #42A5F5, #1565C0); }
 .level-card.hard { background: linear-gradient(135deg, #FFA726, #E65100); }
 .level-card.super { background: linear-gradient(135deg, #EF5350, #B71C1C); }
-
-/* ===== GAME ===== */
 .game-screen { padding: 10px 12px; display: flex; flex-direction: column; }
 .game-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .game-title { text-align: center; }
@@ -50,27 +46,22 @@ body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inse
 .stat .value { font-size: 18px; font-weight: 700; }
 .progress-bar { width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
 .progress-fill { height: 100%; background: #B388FF; width: 0%; transition: width 0.3s; }
-#boardWrap { position: relative; width: 100%; aspect-ratio: 1; border-radius: 18px; background: #241646; overflow: hidden; touch-action: none; }
+#boardWrap { position: relative; width: min(100%, calc(100vh - 240px)); max-width: 480px; aspect-ratio: 1; border-radius: 18px; background: #241646; overflow: hidden; touch-action: none; margin: 0 auto; align-self: center; }
 #board { display: block; width: 100%; height: 100%; }
 .booster-bar { display: flex; gap: 8px; margin-top: 10px; }
 .booster-btn { flex: 1; background: #33245C; border-radius: 12px; padding: 8px 0; text-align: center; cursor: pointer; border: none; color: #fff; }
 .booster-btn:active { transform: scale(0.96); }
 .booster-btn .emoji { font-size: 22px; display: block; }
 .booster-btn .label { font-size: 10px; color: #FFC107; font-weight: 700; }
-
-/* ===== DIALOGS ===== */
 .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 100; }
 .dialog { background: #2D1B4E; border-radius: 20px; padding: 22px; width: 100%; max-width: 340px; text-align: center; }
 .dialog h3 { font-size: 20px; margin-bottom: 10px; }
-.dialog p { font-size: 14px; opacity: 0.85; margin-bottom: 14px; }
+.dialog p { font-size: 14px; opacity: 0.85; margin-bottom: 14px; white-space: pre-line; }
 .dialog .buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 .dialog button { background: #B388FF; color: #1A0E2E; border: none; border-radius: 12px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
 .dialog button.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.2); }
 .dialog button:disabled { opacity: 0.4; }
-.big-emoji { font-size: 48px; margin-bottom: 8px; }
 .stars-big { font-size: 44px; color: #FFC107; letter-spacing: 4px; }
-
-/* ===== ACHIEVEMENTS ===== */
 .ach-list { padding: 12px 14px; overflow-y: auto; }
 .ach-row { display: flex; align-items: center; background: #33245C; border-radius: 14px; padding: 12px; margin-bottom: 10px; gap: 12px; }
 .ach-row.locked { opacity: 0.55; }
@@ -81,10 +72,21 @@ body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inse
 .ach-row .bar { height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 6px; overflow: hidden; }
 .ach-row .bar-fill { height: 100%; background: #FFC107; width: 0%; }
 .ach-row .prog { font-size: 10px; opacity: 0.6; margin-top: 3px; }
+
+/* Анимация «прыжка» очков */
+@keyframes scoreBump {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.45); color: #FFD740; text-shadow: 0 0 14px rgba(255,215,64,0.85); }
+  100% { transform: scale(1); color: inherit; text-shadow: none; }
+}
+.score-bump {
+  display: inline-block;
+  animation: scoreBump 0.4s ease-out;
+}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<script src="app.js"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
