@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Match 3">
+<meta name="theme-color" content="#1A0E2E">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%231A0E2E'/%3E%3Cpolygon points='96,40 140,68 140,124 96,152 52,124 52,68' fill='%23B388FF' stroke='%23fff' stroke-width='6'/%3E%3C/svg%3E">
+<title>Match 3</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1A0E2E; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #fff; }
+body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; background: linear-gradient(180deg, #1A0E2E 0%, #2D1B4E 100%); }
+.screen { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ===== MAP ===== */
+.map-screen { padding: 12px 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.map-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.map-title { font-size: 26px; font-weight: 900; letter-spacing: 4px; color: #B388FF; }
+.map-chips { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.chip { background: #33245C; padding: 8px 14px; border-radius: 20px; font-size: 14px; color: #fff; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.chip.gold { background: rgba(255,193,7,0.85); color: #3E2723; font-weight: 700; }
+.chip.accent { background: rgba(179,136,255,0.85); color: #3E2723; font-weight: 700; }
+.chip.disabled { opacity: 0.5; cursor: default; }
+.level-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-bottom: 24px; }
+.level-card { aspect-ratio: 1; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; padding: 6px; font-weight: 900; }
+.level-card.locked { background: linear-gradient(135deg, #424242, #212121); }
+.level-card.locked .num { font-size: 30px; opacity: 0.5; }
+.level-card .num { font-size: 30px; color: #fff; }
+.level-card .stars { font-size: 13px; color: #FFC107; margin-top: 2px; }
+.level-card .goal { font-size: 11px; font-weight: 700; margin-top: 2px; }
+.level-card.easy { background: linear-gradient(135deg, #66BB6A, #2E7D32); }
+.level-card.normal { background: linear-gradient(135deg, #42A5F5, #1565C0); }
+.level-card.hard { background: linear-gradient(135deg, #FFA726, #E65100); }
+.level-card.super { background: linear-gradient(135deg, #EF5350, #B71C1C); }
+
+/* ===== GAME ===== */
+.game-screen { padding: 10px 12px; display: flex; flex-direction: column; }
+.game-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.game-title { text-align: center; }
+.game-title h2 { font-size: 18px; font-weight: 700; }
+.game-title .diff { font-size: 11px; color: #B388FF; }
+.stats-row { display: flex; justify-content: space-around; background: #33245C; border-radius: 14px; padding: 10px; margin-bottom: 8px; }
+.stat { text-align: center; }
+.stat .label { font-size: 11px; opacity: 0.6; }
+.stat .value { font-size: 18px; font-weight: 700; }
+.progress-bar { width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+.progress-fill { height: 100%; background: #B388FF; width: 0%; transition: width 0.3s; }
+#boardWrap { position: relative; width: 100%; aspect-ratio: 1; border-radius: 18px; background: #241646; overflow: hidden; touch-action: none; }
+#board { display: block; width: 100%; height: 100%; }
+.booster-bar { display: flex; gap: 8px; margin-top: 10px; }
+.booster-btn { flex: 1; background: #33245C; border-radius: 12px; padding: 8px 0; text-align: center; cursor: pointer; border: none; color: #fff; }
+.booster-btn:active { transform: scale(0.96); }
+.booster-btn .emoji { font-size: 22px; display: block; }
+.booster-btn .label { font-size: 10px; color: #FFC107; font-weight: 700; }
+
+/* ===== DIALOGS ===== */
+.dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+.dialog { background: #2D1B4E; border-radius: 20px; padding: 22px; width: 100%; max-width: 340px; text-align: center; }
+.dialog h3 { font-size: 20px; margin-bottom: 10px; }
+.dialog p { font-size: 14px; opacity: 0.85; margin-bottom: 14px; }
+.dialog .buttons { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.dialog button { background: #B388FF; color: #1A0E2E; border: none; border-radius: 12px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
+.dialog button.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+.dialog button:disabled { opacity: 0.4; }
+.big-emoji { font-size: 48px; margin-bottom: 8px; }
+.stars-big { font-size: 44px; color: #FFC107; letter-spacing: 4px; }
+
+/* ===== ACHIEVEMENTS ===== */
+.ach-list { padding: 12px 14px; overflow-y: auto; }
+.ach-row { display: flex; align-items: center; background: #33245C; border-radius: 14px; padding: 12px; margin-bottom: 10px; gap: 12px; }
+.ach-row.locked { opacity: 0.55; }
+.ach-row .emoji { font-size: 28px; }
+.ach-row .info { flex: 1; }
+.ach-row .title { font-size: 15px; font-weight: 700; }
+.ach-row .desc { font-size: 12px; opacity: 0.7; }
+.ach-row .bar { height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.ach-row .bar-fill { height: 100%; background: #FFC107; width: 0%; }
+.ach-row .prog { font-size: 10px; opacity: 0.6; margin-top: 3px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="app.js"></script>
+</body>
+</html>
