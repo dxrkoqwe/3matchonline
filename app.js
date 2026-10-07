@@ -98,6 +98,7 @@ class Progress {
     this.unlocked = d.unlocked || 1;
     this.coins = 999999;
     this.bestScores = d.bestScores || {};
+    this.completed = d.completed || {};
     this.lastDailyTime = d.lastDailyTime || 0;
     this.dailyStreak = d.dailyStreak || 0;
     this.totalWins = d.totalWins || 0;
@@ -111,7 +112,7 @@ class Progress {
     this.lastDailyChallengeDate = d.lastDailyChallengeDate || '';
   }
   save() { localStorage.setItem('match3_progress', JSON.stringify({
-    unlocked: this.unlocked, bestScores: this.bestScores,
+    unlocked: this.unlocked, bestScores: this.bestScores, completed: this.completed,
     lastDailyTime: this.lastDailyTime, dailyStreak: this.dailyStreak,
     totalWins: this.totalWins, totalCoinsEarned: this.totalCoinsEarned,
     totalHearts: this.totalHearts, totalIce: this.totalIce,
@@ -131,11 +132,13 @@ class Progress {
   }
   recordWin(levelId, score, reward) {
     if (score > (this.bestScores[levelId]||0)) this.bestScores[levelId] = score;
+    this.completed[levelId] = true;
     this.totalCoinsEarned += reward;
     this.totalWins += 1;
     if (levelId + 1 > this.unlocked) this.unlocked = levelId + 1;
     this.save();
   }
+  isCompleted(levelId) { return !!this.completed[levelId]; }
   progressFor(id) {
     switch(id) {
       case 1: case 2: case 3: case 4: case 5: return this.totalWins;
@@ -443,7 +446,7 @@ class GameEngine {
     this.bombsSession = 0;
     this.maxCascade = 0;
     this.usedBooster = false;
-    this.visuals = new Map();  // id -> {vx, vy, tx, ty, scale, exploding, t, tile}
+    this.visuals = new Map();
     this.rafId = null;
     this.hintPhase = 0;
     this.startAnimationLoop();
@@ -465,13 +468,11 @@ class GameEngine {
   }
 
   updateVisuals() {
-    // Собираем живые тайлы
     const gridMap = new Map();
     for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
       const t = this.grid[r][c];
       if (t) gridMap.set(t.id, {tile:t, r, c});
     }
-    // Обновляем существующие визуалы
     for (const [id, v] of this.visuals) {
       const entry = gridMap.get(id);
       if (entry) {
@@ -483,7 +484,6 @@ class GameEngine {
         v.exploding = true; v.t = 0;
       }
     }
-    // Добавляем новые визуалы (появившиеся тайлы падают сверху)
     for (const [id, {tile, r, c}] of gridMap) {
       if (!this.visuals.has(id)) {
         this.visuals.set(id, {
@@ -492,7 +492,6 @@ class GameEngine {
         });
       }
     }
-    // Анимация
     for (const [id, v] of [...this.visuals]) {
       if (v.exploding) {
         v.t += 0.07;
@@ -515,7 +514,6 @@ class GameEngine {
     try {
       const tileA = this.grid[a[0]][a[1]];
       const tileB = this.grid[b[0]][b[1]];
-      // Радуга активируется при любом свопе
       if (tileA.rainbow || tileB.rainbow) {
         this.movesLeft--;
         const rainbowPos = tileA.rainbow ? a : b;
@@ -525,7 +523,6 @@ class GameEngine {
         this.checkEnd();
         return;
       }
-      // Бомба активируется при свопе
       if (tileA.bomb || tileB.bomb) {
         this.movesLeft--;
         const bombPos = tileA.bomb ? a : b;
@@ -565,7 +562,6 @@ class GameEngine {
 
   async clearCells(affected, afterDelay) {
     if (affected.size === 0) return;
-    // Лёд
     const newIce = this.ice.map(r => r.slice());
     let iceBroken = 0;
     for (const key of affected) {
@@ -577,7 +573,6 @@ class GameEngine {
       this.iceBrokenSession += iceBroken;
       if (this.level.goal === 'ice') this.goalProgress += iceBroken;
     }
-    // Сердечки
     let heartsCleared = 0;
     for (const key of affected) {
       const [rr, cc] = key.split(',').map(Number);
@@ -597,9 +592,9 @@ class GameEngine {
     }
     this.score += affected.size * 25;
     this.grid = markMatching(this.grid, affected);
-    await sleep(320);  // время на взрыв
+    await sleep(320);
     this.grid = dropAndRefill(this.grid, affected, this.level.types);
-    await sleep(340);  // время на падение
+    await sleep(340);
     await this.resolveCascades();
   }
 
@@ -618,14 +613,11 @@ class GameEngine {
       if (rainbowAt) this.rainbowsSession++;
       if (bombAt) this.bombsSession++;
 
-      // ID для сохранения спец-тайлов
       let rainbowId = null, bombId = null;
       if (rainbowAt) rainbowId = this.grid[rainbowAt[0]][rainbowAt[1]].id;
       if (bombAt) bombId = this.grid[bombAt[0]][bombAt[1]].id;
 
-      // Множество на удаление
       const toRemove = new Set(matches);
-      // Расширяем для существующих бомб, попавших в матч
       for (const key of [...toRemove]) {
         const [r, c] = key.split(',').map(Number);
         if (this.grid[r][c].bomb) {
@@ -634,7 +626,6 @@ class GameEngine {
               if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) toRemove.add(`${rr},${cc}`);
         }
       }
-      // Сохраняем позиции для спец-тайлов
       if (rainbowId) for (const k of [...toRemove]) {
         const [r,c] = k.split(',').map(Number);
         if (this.grid[r][c].id === rainbowId) toRemove.delete(k);
@@ -644,7 +635,6 @@ class GameEngine {
         if (this.grid[r][c].id === bombId) toRemove.delete(k);
       }
 
-      // Лёд
       const newIce = this.ice.map(r => r.slice());
       let iceBroken = 0;
       for (const key of toRemove) {
@@ -656,7 +646,6 @@ class GameEngine {
         this.iceBrokenSession += iceBroken;
         if (this.level.goal === 'ice') this.goalProgress += iceBroken;
       }
-      // Сердечки
       let heartsCleared = 0;
       for (const key of toRemove) {
         const [r, c] = key.split(',').map(Number);
@@ -674,7 +663,6 @@ class GameEngine {
         }
         this.goalProgress += count;
       }
-      // Разблокировка
       const unlocks = new Set();
       for (const key of toRemove) {
         const [r, c] = key.split(',').map(Number);
@@ -688,11 +676,10 @@ class GameEngine {
 
       this.grid = markMatching(this.grid, toRemove);
       if (unlocks.size > 0) this.grid = unlockCells(this.grid, unlocks);
-      await sleep(340);  // взрыв
+      await sleep(340);
 
       this.grid = dropAndRefill(this.grid, toRemove, this.level.types);
 
-      // Возвращаем радугу/бомбу на их места (по id)
       if (rainbowId) {
         const g = this.grid.map(r => r.slice());
         for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
@@ -707,7 +694,7 @@ class GameEngine {
         }
         this.grid = g;
       }
-      await sleep(340);  // падение
+      await sleep(340);
 
       let rs = 0;
       while (!hasAnyMove(this.grid) && rs < 8) {
@@ -895,28 +882,24 @@ function drawBombIcon(x, y, size) {
   const cx = x + size/2, cy = y + size/2;
   const s = size * 0.55;
   ctx.save();
-  // Чёрный шар
   const grad = ctx.createRadialGradient(cx - s*0.15, cy - s*0.10, s*0.05, cx, cy, s*0.45);
   grad.addColorStop(0, '#555'); grad.addColorStop(1, '#111');
   ctx.beginPath();
   ctx.arc(cx, cy + s*0.08, s*0.36, 0, Math.PI*2);
   ctx.fillStyle = grad; ctx.fill();
   ctx.strokeStyle = '#000'; ctx.lineWidth = size * 0.02; ctx.stroke();
-  // Фитиль
   ctx.beginPath();
   ctx.moveTo(cx + s*0.20, cy - s*0.22);
   ctx.quadraticCurveTo(cx + s*0.42, cy - s*0.45, cx + s*0.18, cy - s*0.55);
   ctx.lineWidth = size * 0.045;
   ctx.strokeStyle = '#8D6E00';
   ctx.lineCap = 'round'; ctx.stroke();
-  // Искра
   ctx.beginPath();
   ctx.arc(cx + s*0.18, cy - s*0.60, s*0.11, 0, Math.PI*2);
   ctx.fillStyle = '#FFC107'; ctx.fill();
   ctx.beginPath();
   ctx.arc(cx + s*0.18, cy - s*0.60, s*0.055, 0, Math.PI*2);
   ctx.fillStyle = '#FFF8E1'; ctx.fill();
-  // Блик
   ctx.beginPath();
   ctx.arc(cx - s*0.13, cy + s*0.02, s*0.08, 0, Math.PI*2);
   ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
@@ -1028,13 +1011,11 @@ function drawExplosion(x, y, size, t) {
   const r = maxR * t;
   const alpha = 1 - t;
   ctx.save();
-  // Расширяющийся круг
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI*2);
   ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.9})`;
   ctx.lineWidth = size * 0.14 * (1 - t);
   ctx.stroke();
-  // Частицы
   const angles = [0, 45, 90, 135, 180, 225, 270, 315];
   for (const a of angles) {
     const rad = a * Math.PI / 180;
@@ -1059,18 +1040,10 @@ function render(engine) {
   ctx.clearRect(0, 0, w, h);
   const size = cellPx;
 
-  // Лёд (статично под фишками)
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
     if (engine.ice[r][c] > 0) drawIce(c*size, r*size, size, engine.ice[r][c]);
   }
 
-  // Подсказка (мигание)
-  if (engine.selected) {
-    // просто увеличение выбранной
-  }
-
-  // Отрисовка по визуалам
-  const hintPulse = 0.5 + 0.5 * Math.sin(engine.hintPhase * Math.PI * 2);
   for (const [id, v] of engine.visuals) {
     const tile = v.tile;
     if (!tile) continue;
@@ -1157,13 +1130,10 @@ function showMap() {
   const grid = el('div', { className: 'level-grid' });
   for (const lvl of LEVELS) {
     const unlocked = lvl.id <= progress.unlocked;
-    const best = progress.bestScores[lvl.id] || 0;
+    const completed = progress.isCompleted(lvl.id);
     const diffClass = { easy: 'easy', normal: 'normal', hard: 'hard', super: 'super' }[lvl.diff];
     const cls = unlocked ? diffClass : 'locked';
-    const stars = !unlocked ? 0 :
-      best >= lvl.target * 3/2 ? 3 :
-      best >= lvl.target * 5/4 ? 2 :
-      best > 0 ? 1 : 0;
+    const stars = (!unlocked || !completed) ? 0 : 3;
     const card = el('div', { className: `level-card ${cls}`, onClick: () => { if (unlocked) startLevel(lvl.id); } });
     if (unlocked) {
       card.appendChild(el('div', { className: 'num', text: String(lvl.id) }));
@@ -1380,7 +1350,7 @@ function checkEndAndShowDialogs() {
     progress.save();
     const newAch = progress.checkAchievements();
 
-    const stars = e.score >= lvl.target * 3/2 ? 3 : e.score >= lvl.target * 5/4 ? 2 : 1;
+    const stars = 3;
     const hasNext = lvl.id !== 1000 && lvl.id < LEVELS.length;
     showDialog({
       title: lvl.id === 1000 ? '⚔ Испытание пройдено!' : 'Победа!',
