@@ -321,7 +321,7 @@ function hasAnyMove(grid) {
   const movable = grid.map(r => r.map(x => !x.stone && !x.locked));
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
     if (!movable[r][c]) continue;
-    if (grid[r][c].rainbow || grid[r][c].bomb) {
+    if (grid[r][c].rainbow) {
       if (c+1 < SIZE && movable[r][c+1]) return true;
       if (r+1 < SIZE && movable[r+1][c]) return true;
     }
@@ -338,7 +338,7 @@ function findHint(grid) {
   const t = grid.map(r => r.map(x => x.type));
   const movable = grid.map(r => r.map(x => !x.stone && !x.locked));
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
-    if ((grid[r][c].rainbow || grid[r][c].bomb) && movable[r][c]) {
+    if (grid[r][c].rainbow && movable[r][c]) {
       if (c+1 < SIZE && movable[r][c+1]) return [[r,c],[r,c+1]];
       if (r+1 < SIZE && movable[r+1][c]) return [[r,c],[r+1,c]];
     }
@@ -514,19 +514,13 @@ class GameEngine {
     try {
       const tileA = this.grid[a[0]][a[1]];
       const tileB = this.grid[b[0]][b[1]];
+      // Радуга активируется при любом свайпе (color bomb)
       if (tileA.rainbow || tileB.rainbow) {
         this.movesLeft--;
         const rainbowPos = tileA.rainbow ? a : b;
         const targetPos = tileA.rainbow ? b : a;
         const targetType = this.grid[targetPos[0]][targetPos[1]].type;
         await this.activateRainbow(rainbowPos, targetType);
-        this.checkEnd();
-        return;
-      }
-      if (tileA.bomb || tileB.bomb) {
-        this.movesLeft--;
-        const bombPos = tileA.bomb ? a : b;
-        await this.activateBomb(bombPos);
         this.checkEnd();
         return;
       }
@@ -549,14 +543,6 @@ class GameEngine {
       const t = this.grid[r][c];
       if (!t.stone && (t.type === targetType || (r === pos[0] && c === pos[1]))) affected.add(`${r},${c}`);
     }
-    await this.clearCells(affected, true);
-  }
-
-  async activateBomb(pos) {
-    const affected = new Set();
-    for (let rr=pos[0]-1; rr<=pos[0]+1; rr++)
-      for (let cc=pos[1]-1; cc<=pos[1]+1; cc++)
-        if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) affected.add(`${rr},${cc}`);
     await this.clearCells(affected, true);
   }
 
@@ -618,6 +604,7 @@ class GameEngine {
       if (bombAt) bombId = this.grid[bombAt[0]][bombAt[1]].id;
 
       const toRemove = new Set(matches);
+      // Если в матче есть бомба — расширяем зону на 3×3
       for (const key of [...toRemove]) {
         const [r, c] = key.split(',').map(Number);
         if (this.grid[r][c].bomb) {
@@ -626,6 +613,7 @@ class GameEngine {
               if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) toRemove.add(`${rr},${cc}`);
         }
       }
+      // Сохраняем спец-фишки от удаления
       if (rainbowId) for (const k of [...toRemove]) {
         const [r,c] = k.split(',').map(Number);
         if (this.grid[r][c].id === rainbowId) toRemove.delete(k);
