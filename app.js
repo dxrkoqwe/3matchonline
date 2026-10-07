@@ -9,7 +9,6 @@ const TILE_TYPES = [
   { color: '#40E0D0', shadow: '#00695C', sides: 8, rotation: 22.5 },
   { color: '#FF80AB', shadow: '#880E4F', sides: 6, rotation: -15 },
 ];
-const BOOSTER_COST = 0;
 
 // ===== LEVELS =====
 const LEVELS = [
@@ -121,10 +120,7 @@ class Progress {
     lastDailyChallengeDate: this.lastDailyChallengeDate,
   })); }
   canClaimDaily() { return Date.now() - this.lastDailyTime > 20*60*60*1000; }
-  nextDailyAmount() {
-    const day = (this.dailyStreak % 7) + 1;
-    return [20,30,50,75,100,150,300][day-1];
-  }
+  nextDailyAmount() { return [20,30,50,75,100,150,300][(this.dailyStreak % 7)]; }
   claimDaily() {
     const a = this.nextDailyAmount();
     this.totalCoinsEarned += a;
@@ -169,13 +165,20 @@ class Progress {
 // ===== BOARD LOGIC =====
 let idCounter = 0;
 function nextId() { return ++idCounter; }
+function randInt(n) { return Math.floor(Math.random() * n); }
+function shuffle(a) { for (let i=a.length-1; i>0; i--) { const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function makeTile(type) {
+  return { id: nextId(), type, matching:false, locked:false, stone:false, hasHeart:false, rainbow:false, bomb:false };
+}
 
 function generateGrid(types) {
   let grid;
   let safety = 0;
   do {
     grid = Array.from({length:SIZE}, () =>
-      Array.from({length:SIZE}, () => ({ id: nextId(), type: randInt(types), matching:false, locked:false, stone:false, hasHeart:false, rainbow:false }))
+      Array.from({length:SIZE}, () => makeTile(randInt(types)))
     );
     safety++;
   } while ((findMatches(grid).size > 0 || !hasAnyMove(grid)) && safety < 30);
@@ -269,8 +272,33 @@ function findFiveInRow(grid) {
   return null;
 }
 
-function areAdjacent(a, b) { return Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]) === 1; }
+function findFourInRow(grid) {
+  for (let r=0; r<SIZE; r++) {
+    let c = 0;
+    while (c < SIZE) {
+      const t = grid[r][c];
+      if (t.stone) { c++; continue; }
+      let c2 = c;
+      while (c2 < SIZE && !grid[r][c2].stone && grid[r][c2].type === t.type) c2++;
+      if (c2 - c === 4) return [r, c + 1];
+      c = c2;
+    }
+  }
+  for (let c=0; c<SIZE; c++) {
+    let r = 0;
+    while (r < SIZE) {
+      const t = grid[r][c];
+      if (t.stone) { r++; continue; }
+      let r2 = r;
+      while (r2 < SIZE && !grid[r2][c].stone && grid[r2][c].type === t.type) r2++;
+      if (r2 - r === 4) return [r + 1, c];
+      r = r2;
+    }
+  }
+  return null;
+}
 
+function areAdjacent(a, b) { return Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]) === 1; }
 function canSwap(grid, a, b) {
   if (!areAdjacent(a, b)) return false;
   return !grid[a[0]][a[1]].stone && !grid[a[0]][a[1]].locked
@@ -290,7 +318,7 @@ function hasAnyMove(grid) {
   const movable = grid.map(r => r.map(x => !x.stone && !x.locked));
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
     if (!movable[r][c]) continue;
-    if (grid[r][c].rainbow) {
+    if (grid[r][c].rainbow || grid[r][c].bomb) {
       if (c+1 < SIZE && movable[r][c+1]) return true;
       if (r+1 < SIZE && movable[r+1][c]) return true;
     }
@@ -307,7 +335,7 @@ function findHint(grid) {
   const t = grid.map(r => r.map(x => x.type));
   const movable = grid.map(r => r.map(x => !x.stone && !x.locked));
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
-    if (grid[r][c].rainbow && movable[r][c]) {
+    if ((grid[r][c].rainbow || grid[r][c].bomb) && movable[r][c]) {
       if (c+1 < SIZE && movable[r][c+1]) return [[r,c],[r,c+1]];
       if (r+1 < SIZE && movable[r+1][c]) return [[r,c],[r+1,c]];
     }
@@ -343,7 +371,6 @@ function hasMatchAt(t, r, c) {
 function markMatching(grid, matches) {
   return grid.map((row, r) => row.map((tile, c) => matches.has(`${r},${c}`) ? {...tile, matching:true} : tile));
 }
-
 function unlockCells(grid, cells) {
   return grid.map((row, r) => row.map((tile, c) => cells.has(`${r},${c}`) ? {...tile, locked:false} : tile));
 }
@@ -377,14 +404,8 @@ function dropSegment(g, c, from, to, types) {
     if (t && !t.stone) existing.push(t);
   }
   let write = to;
-  for (let i=existing.length-1; i>=0; i--) {
-    g[write][c] = existing[i];
-    write--;
-  }
-  while (write >= from) {
-    g[write][c] = { id: nextId(), type: randInt(types), matching:false, locked:false, stone:false, hasHeart:false, rainbow:false };
-    write--;
-  }
+  for (let i=existing.length-1; i>=0; i--) { g[write][c] = existing[i]; write--; }
+  while (write >= from) { g[write][c] = makeTile(randInt(types)); write--; }
 }
 
 function reshuffle(grid, types) {
@@ -392,20 +413,13 @@ function reshuffle(grid, types) {
   const colors = [];
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
     const t = grid[r][c];
-    if (!t.stone && !t.rainbow) { movable.push([r,c]); colors.push(t.type); }
+    if (!t.stone && !t.rainbow && !t.bomb) { movable.push([r,c]); colors.push(t.type); }
   }
   shuffle(colors);
   const g = grid.map(row => row.slice());
-  movable.forEach(([r,c], i) => {
-    g[r][c] = {...grid[r][c], type: colors[i], matching:false};
-  });
+  movable.forEach(([r,c], i) => { g[r][c] = {...grid[r][c], type: colors[i], matching:false}; });
   return findMatches(g).size === 0 ? g : grid;
 }
-
-// ===== HELPERS =====
-function randInt(n) { return Math.floor(Math.random() * n); }
-function shuffle(a) { for (let i=a.length-1; i>0; i--) { const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ===== GAME ENGINE =====
 class GameEngine {
@@ -426,8 +440,71 @@ class GameEngine {
     this.heartsSession = 0;
     this.iceBrokenSession = 0;
     this.rainbowsSession = 0;
+    this.bombsSession = 0;
     this.maxCascade = 0;
     this.usedBooster = false;
+    this.visuals = new Map();  // id -> {vx, vy, tx, ty, scale, exploding, t, tile}
+    this.rafId = null;
+    this.hintPhase = 0;
+    this.startAnimationLoop();
+  }
+
+  startAnimationLoop() {
+    if (this.rafId) return;
+    const tick = () => {
+      this.updateVisuals();
+      this.hintPhase = (this.hintPhase + 0.05) % 1;
+      render(this);
+      this.rafId = requestAnimationFrame(tick);
+    };
+    this.rafId = requestAnimationFrame(tick);
+  }
+
+  stopAnimationLoop() {
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+  }
+
+  updateVisuals() {
+    // Собираем живые тайлы
+    const gridMap = new Map();
+    for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
+      const t = this.grid[r][c];
+      if (t) gridMap.set(t.id, {tile:t, r, c});
+    }
+    // Обновляем существующие визуалы
+    for (const [id, v] of this.visuals) {
+      const entry = gridMap.get(id);
+      if (entry) {
+        v.tile = entry.tile;
+        v.tx = entry.c;
+        v.ty = entry.r;
+        if (entry.tile.matching && !v.exploding) { v.exploding = true; v.t = 0; }
+      } else if (!v.exploding) {
+        v.exploding = true; v.t = 0;
+      }
+    }
+    // Добавляем новые визуалы (появившиеся тайлы падают сверху)
+    for (const [id, {tile, r, c}] of gridMap) {
+      if (!this.visuals.has(id)) {
+        this.visuals.set(id, {
+          vx: c, vy: r - 3, tx: c, ty: r,
+          scale: 0.5, exploding: false, t: 0, tile
+        });
+      }
+    }
+    // Анимация
+    for (const [id, v] of [...this.visuals]) {
+      if (v.exploding) {
+        v.t += 0.07;
+        if (v.t >= 1) this.visuals.delete(id);
+      } else {
+        v.vx += (v.tx - v.vx) * 0.28;
+        v.vy += (v.ty - v.vy) * 0.28;
+        v.scale += (1 - v.scale) * 0.22;
+        if (Math.abs(v.vx - v.tx) < 0.01) v.vx = v.tx;
+        if (Math.abs(v.vy - v.ty) < 0.01) v.vy = v.ty;
+      }
+    }
   }
 
   async trySwap(a, b) {
@@ -438,6 +515,7 @@ class GameEngine {
     try {
       const tileA = this.grid[a[0]][a[1]];
       const tileB = this.grid[b[0]][b[1]];
+      // Радуга активируется при любом свопе
       if (tileA.rainbow || tileB.rainbow) {
         this.movesLeft--;
         const rainbowPos = tileA.rainbow ? a : b;
@@ -447,17 +525,22 @@ class GameEngine {
         this.checkEnd();
         return;
       }
+      // Бомба активируется при свопе
+      if (tileA.bomb || tileB.bomb) {
+        this.movesLeft--;
+        const bombPos = tileA.bomb ? a : b;
+        await this.activateBomb(bombPos);
+        this.checkEnd();
+        return;
+      }
       this.grid = swapTiles(this.grid, a, b);
-      render(this);
-      await sleep(200);
+      await sleep(220);
       if (findMatches(this.grid).size === 0) {
         this.grid = swapTiles(this.grid, a, b);
-        render(this);
-        await sleep(200);
+        await sleep(220);
         return;
       }
       this.movesLeft--;
-      render(this);
       await this.resolveCascades();
       this.checkEnd();
     } finally { this.isAnimating = false; }
@@ -469,7 +552,20 @@ class GameEngine {
       const t = this.grid[r][c];
       if (!t.stone && (t.type === targetType || (r === pos[0] && c === pos[1]))) affected.add(`${r},${c}`);
     }
+    await this.clearCells(affected, true);
+  }
+
+  async activateBomb(pos) {
+    const affected = new Set();
+    for (let rr=pos[0]-1; rr<=pos[0]+1; rr++)
+      for (let cc=pos[1]-1; cc<=pos[1]+1; cc++)
+        if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) affected.add(`${rr},${cc}`);
+    await this.clearCells(affected, true);
+  }
+
+  async clearCells(affected, afterDelay) {
     if (affected.size === 0) return;
+    // Лёд
     const newIce = this.ice.map(r => r.slice());
     let iceBroken = 0;
     for (const key of affected) {
@@ -481,6 +577,7 @@ class GameEngine {
       this.iceBrokenSession += iceBroken;
       if (this.level.goal === 'ice') this.goalProgress += iceBroken;
     }
+    // Сердечки
     let heartsCleared = 0;
     for (const key of affected) {
       const [rr, cc] = key.split(',').map(Number);
@@ -498,13 +595,11 @@ class GameEngine {
       }
       this.goalProgress += count;
     }
-    this.grid = markMatching(this.grid, affected);
-    render(this);
-    await sleep(280);
     this.score += affected.size * 25;
+    this.grid = markMatching(this.grid, affected);
+    await sleep(320);  // время на взрыв
     this.grid = dropAndRefill(this.grid, affected, this.level.types);
-    render(this);
-    await sleep(320);
+    await sleep(340);  // время на падение
     await this.resolveCascades();
   }
 
@@ -517,11 +612,42 @@ class GameEngine {
       cascadeLevel++;
       if (cascadeLevel > this.maxCascade) this.maxCascade = cascadeLevel;
       const multiplier = Math.min(3, 1 + (cascadeLevel - 1) * 0.5);
+
       const rainbowAt = findFiveInRow(this.grid);
+      const bombAt = rainbowAt ? null : findFourInRow(this.grid);
       if (rainbowAt) this.rainbowsSession++;
+      if (bombAt) this.bombsSession++;
+
+      // ID для сохранения спец-тайлов
+      let rainbowId = null, bombId = null;
+      if (rainbowAt) rainbowId = this.grid[rainbowAt[0]][rainbowAt[1]].id;
+      if (bombAt) bombId = this.grid[bombAt[0]][bombAt[1]].id;
+
+      // Множество на удаление
+      const toRemove = new Set(matches);
+      // Расширяем для существующих бомб, попавших в матч
+      for (const key of [...toRemove]) {
+        const [r, c] = key.split(',').map(Number);
+        if (this.grid[r][c].bomb) {
+          for (let rr=r-1; rr<=r+1; rr++)
+            for (let cc=c-1; cc<=c+1; cc++)
+              if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) toRemove.add(`${rr},${cc}`);
+        }
+      }
+      // Сохраняем позиции для спец-тайлов
+      if (rainbowId) for (const k of [...toRemove]) {
+        const [r,c] = k.split(',').map(Number);
+        if (this.grid[r][c].id === rainbowId) toRemove.delete(k);
+      }
+      if (bombId) for (const k of [...toRemove]) {
+        const [r,c] = k.split(',').map(Number);
+        if (this.grid[r][c].id === bombId) toRemove.delete(k);
+      }
+
+      // Лёд
       const newIce = this.ice.map(r => r.slice());
       let iceBroken = 0;
-      for (const key of matches) {
+      for (const key of toRemove) {
         const [r, c] = key.split(',').map(Number);
         if (newIce[r][c] > 0) { newIce[r][c]--; iceBroken++; }
       }
@@ -530,8 +656,9 @@ class GameEngine {
         this.iceBrokenSession += iceBroken;
         if (this.level.goal === 'ice') this.goalProgress += iceBroken;
       }
+      // Сердечки
       let heartsCleared = 0;
-      for (const key of matches) {
+      for (const key of toRemove) {
         const [r, c] = key.split(',').map(Number);
         if (this.grid[r][c].hasHeart && newIce[r][c] === 0) heartsCleared++;
       }
@@ -541,42 +668,47 @@ class GameEngine {
       }
       if (this.level.goal === 'color') {
         let count = 0;
-        for (const key of matches) {
+        for (const key of toRemove) {
           const [r, c] = key.split(',').map(Number);
           if (this.grid[r][c].type === this.level.color) count++;
         }
         this.goalProgress += count;
       }
+      // Разблокировка
       const unlocks = new Set();
-      for (const key of matches) {
+      for (const key of toRemove) {
         const [r, c] = key.split(',').map(Number);
         for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
           const nr = r+dr, nc = c+dc;
-          if (nr>=0 && nr<SIZE && nc>=0 && nc<SIZE && this.grid[nr][nc].locked) {
-            unlocks.add(`${nr},${nc}`);
-          }
+          if (nr>=0 && nr<SIZE && nc>=0 && nc<SIZE && this.grid[nr][nc].locked) unlocks.add(`${nr},${nc}`);
         }
       }
-      const basePoints = matches.size * 10 + iceBroken * 15 + unlocks.size * 5 + heartsCleared * 20;
+      const basePoints = toRemove.size * 10 + iceBroken * 15 + unlocks.size * 5 + heartsCleared * 20;
       this.score += Math.round(basePoints * multiplier);
-      this.grid = markMatching(this.grid, matches);
+
+      this.grid = markMatching(this.grid, toRemove);
       if (unlocks.size > 0) this.grid = unlockCells(this.grid, unlocks);
-      render(this);
-      await sleep(240);
-      let toRemove = matches;
-      if (rainbowAt && matches.has(`${rainbowAt[0]},${rainbowAt[1]}`)) {
-        toRemove = new Set(matches);
-        toRemove.delete(`${rainbowAt[0]},${rainbowAt[1]}`);
-      }
+      await sleep(340);  // взрыв
+
       this.grid = dropAndRefill(this.grid, toRemove, this.level.types);
-      if (rainbowAt && matches.has(`${rainbowAt[0]},${rainbowAt[1]}`)) {
+
+      // Возвращаем радугу/бомбу на их места (по id)
+      if (rainbowId) {
         const g = this.grid.map(r => r.slice());
-        const existing = g[rainbowAt[0]][rainbowAt[1]];
-        g[rainbowAt[0]][rainbowAt[1]] = {...existing, rainbow:true, matching:false};
+        for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
+          if (g[r][c].id === rainbowId) g[r][c] = {...g[r][c], rainbow:true, matching:false};
+        }
         this.grid = g;
       }
-      render(this);
-      await sleep(280);
+      if (bombId) {
+        const g = this.grid.map(r => r.slice());
+        for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
+          if (g[r][c].id === bombId) g[r][c] = {...g[r][c], bomb:true, matching:false};
+        }
+        this.grid = g;
+      }
+      await sleep(340);  // падение
+
       let rs = 0;
       while (!hasAnyMove(this.grid) && rs < 8) {
         this.grid = reshuffle(this.grid, this.level.types);
@@ -595,12 +727,11 @@ class GameEngine {
       return;
     }
     const sel = this.selected;
-    if (!sel) { this.selected = [r, c]; render(this); return; }
-    if (sel[0] === r && sel[1] === c) { this.selected = null; render(this); return; }
-    if (!canSwap(this.grid, sel, [r, c])) { this.selected = [r, c]; render(this); return; }
+    if (!sel) { this.selected = [r, c]; return; }
+    if (sel[0] === r && sel[1] === c) { this.selected = null; return; }
+    if (!canSwap(this.grid, sel, [r, c])) { this.selected = [r, c]; return; }
     const a = sel;
     this.selected = null;
-    render(this);
     this.trySwap(a, [r, c]);
   }
 
@@ -617,14 +748,12 @@ class GameEngine {
     this.usedBooster = true;
     if (type === 'shuffle') { this.applyShuffle(); return; }
     this.activeBooster = type;
-    render(this);
   }
 
   async applyShuffle() {
     this.isAnimating = true;
     try {
       this.grid = reshuffle(this.grid, this.level.types);
-      render(this);
       await sleep(300);
     } finally { this.isAnimating = false; }
   }
@@ -634,52 +763,14 @@ class GameEngine {
     try {
       const affected = new Set();
       if (type === 'bomb') {
-        for (let rr=r-1; rr<=r+1; rr++) for (let cc=c-1; cc<=c+1; cc++) {
+        for (let rr=r-1; rr<=r+1; rr++) for (let cc=c-1; cc<=c+1; cc++)
           if (rr>=0 && rr<SIZE && cc>=0 && cc<SIZE) affected.add(`${rr},${cc}`);
-        }
       } else if (type === 'rocketH') {
         for (let cc=0; cc<SIZE; cc++) affected.add(`${r},${cc}`);
       } else if (type === 'rocketV') {
         for (let rr=0; rr<SIZE; rr++) affected.add(`${rr},${c}`);
       }
-      if (affected.size === 0) return;
-      const newIce = this.ice.map(rr => rr.slice());
-      let iceBroken = 0;
-      for (const key of affected) {
-        const [rr, cc] = key.split(',').map(Number);
-        if (newIce[rr][cc] > 0) { newIce[rr][cc] = 0; iceBroken++; }
-      }
-      if (iceBroken > 0) {
-        this.ice = newIce;
-        this.iceBrokenSession += iceBroken;
-        if (this.level.goal === 'ice') this.goalProgress += iceBroken;
-      }
-      let heartsCleared = 0;
-      for (const key of affected) {
-        const [rr, cc] = key.split(',').map(Number);
-        if (this.grid[rr][cc].hasHeart && !this.grid[rr][cc].stone) heartsCleared++;
-      }
-      if (heartsCleared > 0) {
-        this.heartsSession += heartsCleared;
-        if (this.level.goal === 'heart') this.goalProgress += heartsCleared;
-      }
-      if (this.level.goal === 'color') {
-        let count = 0;
-        for (const key of affected) {
-          const [rr, cc] = key.split(',').map(Number);
-          const t = this.grid[rr][cc];
-          if (!t.stone && t.type === this.level.color) count++;
-        }
-        this.goalProgress += count;
-      }
-      this.grid = markMatching(this.grid, affected);
-      render(this);
-      await sleep(240);
-      this.score += affected.size * 15 + heartsCleared * 20;
-      this.grid = dropAndRefill(this.grid, affected, this.level.types);
-      render(this);
-      await sleep(280);
-      await this.resolveCascades();
+      await this.clearCells(affected, true);
       this.checkEnd();
     } finally { this.isAnimating = false; }
   }
@@ -693,7 +784,6 @@ class GameEngine {
     else if (lvl.goal === 'heart') reached = this.goalProgress >= lvl.count;
     if (reached) this.phase = 'WON';
     else if (this.movesLeft <= 0) this.phase = 'LOST';
-    render(this);
     updateStats();
     checkEndAndShowDialogs();
   }
@@ -702,7 +792,6 @@ class GameEngine {
     if (this.phase !== 'LOST') return;
     this.movesLeft += extra;
     this.phase = 'PLAYING';
-    render(this);
     updateStats();
   }
 
@@ -722,9 +811,10 @@ class GameEngine {
     this.heartsSession = 0;
     this.iceBrokenSession = 0;
     this.rainbowsSession = 0;
+    this.bombsSession = 0;
     this.maxCascade = 0;
     this.totalIceCount = this.ice.flat().reduce((a,b) => a+b, 0);
-    render(this);
+    this.visuals.clear();
     updateStats();
   }
 }
@@ -780,28 +870,56 @@ function drawGem(x, y, size, type, rainbow) {
     grad.addColorStop(0, t.color); grad.addColorStop(1, t.shadow);
     ctx.fillStyle = grad;
   }
-  drawPolygon(cx, cy, r, t.sides, t.rotation);
-  ctx.fill();
+  drawPolygon(cx, cy, r, t.sides, t.rotation); ctx.fill();
   const hl = ctx.createLinearGradient(x, y, x, y+size*0.55);
   hl.addColorStop(0, 'rgba(255,255,255,0.55)');
   hl.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = hl;
-  drawPolygon(cx, cy, r, t.sides, t.rotation);
-  ctx.fill();
+  drawPolygon(cx, cy, r, t.sides, t.rotation); ctx.fill();
   const table = ctx.createLinearGradient(x, y+size*0.2, x, y+size*0.8);
   table.addColorStop(0, 'rgba(255,255,255,0.45)');
   table.addColorStop(1, 'rgba(255,255,255,0.08)');
   ctx.fillStyle = table;
-  drawPolygon(cx, cy, r*0.55, t.sides, t.rotation);
-  ctx.fill();
+  drawPolygon(cx, cy, r*0.55, t.sides, t.rotation); ctx.fill();
   ctx.lineWidth = size * 0.02;
   ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  drawPolygon(cx, cy, r*0.55, t.sides, t.rotation);
-  ctx.stroke();
+  drawPolygon(cx, cy, r*0.55, t.sides, t.rotation); ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.beginPath();
   ctx.arc(cx - size*0.15, cy - size*0.18, size*0.055, 0, Math.PI*2);
   ctx.fill();
+  ctx.restore();
+}
+
+function drawBombIcon(x, y, size) {
+  const cx = x + size/2, cy = y + size/2;
+  const s = size * 0.55;
+  ctx.save();
+  // Чёрный шар
+  const grad = ctx.createRadialGradient(cx - s*0.15, cy - s*0.10, s*0.05, cx, cy, s*0.45);
+  grad.addColorStop(0, '#555'); grad.addColorStop(1, '#111');
+  ctx.beginPath();
+  ctx.arc(cx, cy + s*0.08, s*0.36, 0, Math.PI*2);
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = '#000'; ctx.lineWidth = size * 0.02; ctx.stroke();
+  // Фитиль
+  ctx.beginPath();
+  ctx.moveTo(cx + s*0.20, cy - s*0.22);
+  ctx.quadraticCurveTo(cx + s*0.42, cy - s*0.45, cx + s*0.18, cy - s*0.55);
+  ctx.lineWidth = size * 0.045;
+  ctx.strokeStyle = '#8D6E00';
+  ctx.lineCap = 'round'; ctx.stroke();
+  // Искра
+  ctx.beginPath();
+  ctx.arc(cx + s*0.18, cy - s*0.60, s*0.11, 0, Math.PI*2);
+  ctx.fillStyle = '#FFC107'; ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + s*0.18, cy - s*0.60, s*0.055, 0, Math.PI*2);
+  ctx.fillStyle = '#FFF8E1'; ctx.fill();
+  // Блик
+  ctx.beginPath();
+  ctx.arc(cx - s*0.13, cy + s*0.02, s*0.08, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
   ctx.restore();
 }
 
@@ -817,16 +935,13 @@ function drawHeart(x, y, size) {
   ctx.closePath();
   ctx.lineWidth = s * 0.18;
   ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-  ctx.lineJoin = 'round';
-  ctx.stroke();
+  ctx.lineJoin = 'round'; ctx.stroke();
   const grad = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
   grad.addColorStop(0, '#FF5252'); grad.addColorStop(1, '#C62828');
-  ctx.fillStyle = grad;
-  ctx.fill();
+  ctx.fillStyle = grad; ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.beginPath();
-  ctx.arc(cx - s*0.18, cy - s*0.15, s*0.09, 0, Math.PI*2);
-  ctx.fill();
+  ctx.arc(cx - s*0.18, cy - s*0.15, s*0.09, 0, Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
@@ -843,12 +958,10 @@ function drawStone(x, y, size) {
   ctx.lineTo(x + pad, y + size*0.75);
   ctx.closePath();
   ctx.lineWidth = size * 0.10;
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.stroke();
   const grad = ctx.createLinearGradient(x, y, x, y+size);
   grad.addColorStop(0, '#9E9E9E'); grad.addColorStop(1, '#424242');
-  ctx.fillStyle = grad;
-  ctx.fill();
+  ctx.fillStyle = grad; ctx.fill();
   ctx.restore();
 }
 
@@ -858,8 +971,7 @@ function drawIce(x, y, size, layers) {
   const rad = size * 0.16;
   ctx.beginPath();
   ctx.roundRect(x + 2, y + 2, size - 4, size - 4, rad);
-  ctx.fillStyle = `rgba(179,229,252,${alpha})`;
-  ctx.fill();
+  ctx.fillStyle = `rgba(179,229,252,${alpha})`; ctx.fill();
   const crackCount = layers >= 2 ? 4 : 2;
   ctx.strokeStyle = 'rgba(255,255,255,0.8)';
   ctx.lineWidth = size * 0.03;
@@ -873,16 +985,12 @@ function drawIce(x, y, size, layers) {
     const x2 = x + (seed / 233280) * size;
     seed = (seed * 9301 + 49297) % 233280;
     const y2 = y + (seed / 233280) * size;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
   }
   ctx.strokeStyle = 'rgba(255,255,255,0.9)';
   ctx.lineWidth = size * 0.03;
   ctx.beginPath();
-  ctx.roundRect(x + 2, y + 2, size - 4, size - 4, rad);
-  ctx.stroke();
+  ctx.roundRect(x + 2, y + 2, size - 4, size - 4, rad); ctx.stroke();
   ctx.restore();
 }
 
@@ -891,69 +999,104 @@ function drawLock(x, y, size) {
   const rad = size * 0.16;
   ctx.beginPath();
   ctx.roundRect(x + 2, y + 2, size - 4, size - 4, rad);
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.fill();
-  const bodyW = size * 0.42;
-  const bodyH = size * 0.30;
-  const bodyX = x + (size - bodyW) / 2;
-  const bodyY = y + size * 0.52;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill();
+  const bodyW = size * 0.42, bodyH = size * 0.30;
+  const bodyX = x + (size - bodyW) / 2, bodyY = y + size * 0.52;
   ctx.beginPath();
   ctx.roundRect(bodyX, bodyY, bodyW, bodyH, size * 0.05);
-  ctx.fillStyle = '#FFC107';
-  ctx.fill();
-  ctx.strokeStyle = '#8D6E00';
-  ctx.lineWidth = size * 0.02;
-  ctx.stroke();
+  ctx.fillStyle = '#FFC107'; ctx.fill();
+  ctx.strokeStyle = '#8D6E00'; ctx.lineWidth = size * 0.02; ctx.stroke();
   const strokeW = size * 0.07;
-  const arcLeft = bodyX + bodyW * 0.20;
-  const arcRight = bodyX + bodyW * 0.80;
-  const arcTop = bodyY - bodyH * 0.65;
-  const arcBottom = bodyY + bodyH * 0.05;
+  const arcLeft = bodyX + bodyW * 0.20, arcRight = bodyX + bodyW * 0.80;
+  const arcTop = bodyY - bodyH * 0.65, arcBottom = bodyY + bodyH * 0.05;
   ctx.beginPath();
   ctx.moveTo(arcLeft, arcBottom);
   ctx.lineTo(arcLeft, (arcTop + arcBottom) / 2);
   ctx.quadraticCurveTo((arcLeft+arcRight)/2, arcTop, arcRight, (arcTop+arcBottom)/2);
   ctx.lineTo(arcRight, arcBottom);
-  ctx.lineWidth = strokeW;
-  ctx.strokeStyle = '#FFC107';
-  ctx.lineCap = 'round';
-  ctx.stroke();
+  ctx.lineWidth = strokeW; ctx.strokeStyle = '#FFC107';
+  ctx.lineCap = 'round'; ctx.stroke();
   ctx.fillStyle = '#3E2723';
   ctx.beginPath();
-  ctx.arc(x + size/2, bodyY + bodyH*0.42, size*0.045, 0, Math.PI*2);
-  ctx.fill();
+  ctx.arc(x + size/2, bodyY + bodyH*0.42, size*0.045, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawExplosion(x, y, size, t) {
+  const cx = x + size/2, cy = y + size/2;
+  const maxR = size * 0.85;
+  const r = maxR * t;
+  const alpha = 1 - t;
+  ctx.save();
+  // Расширяющийся круг
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI*2);
+  ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.9})`;
+  ctx.lineWidth = size * 0.14 * (1 - t);
+  ctx.stroke();
+  // Частицы
+  const angles = [0, 45, 90, 135, 180, 225, 270, 315];
+  for (const a of angles) {
+    const rad = a * Math.PI / 180;
+    const px = cx + Math.cos(rad) * r;
+    const py = cy + Math.sin(rad) * r;
+    ctx.beginPath();
+    ctx.arc(px, py, size * 0.08 * (1 - t*0.5), 0, Math.PI*2);
+    ctx.fillStyle = `rgba(255,220,100,${alpha})`;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, py, size * 0.04 * (1 - t*0.5), 0, Math.PI*2);
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fill();
+  }
   ctx.restore();
 }
 
 function render(engine) {
-  if (!ctx) return;
+  if (!ctx || !cellPx) return;
   const w = canvas.width / (window.devicePixelRatio || 1);
   const h = canvas.height / (window.devicePixelRatio || 1);
   ctx.clearRect(0, 0, w, h);
   const size = cellPx;
 
+  // Лёд (статично под фишками)
   for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
-    if (engine.ice[r][c] > 0) {
-      drawIce(c*size, r*size, size, engine.ice[r][c]);
-    }
+    if (engine.ice[r][c] > 0) drawIce(c*size, r*size, size, engine.ice[r][c]);
   }
 
-  for (let r=0; r<SIZE; r++) for (let c=0; c<SIZE; c++) {
-    const tile = engine.grid[r][c];
+  // Подсказка (мигание)
+  if (engine.selected) {
+    // просто увеличение выбранной
+  }
+
+  // Отрисовка по визуалам
+  const hintPulse = 0.5 + 0.5 * Math.sin(engine.hintPhase * Math.PI * 2);
+  for (const [id, v] of engine.visuals) {
+    const tile = v.tile;
     if (!tile) continue;
-    const x = c*size, y = r*size;
-    const isSelected = engine.selected && engine.selected[0]===r && engine.selected[1]===c;
-    ctx.save();
+    const x = v.vx * size;
+    const y = v.vy * size;
     const pad = size * 0.04;
-    if (isSelected) {
-      ctx.translate(x + size/2, y + size/2);
-      ctx.scale(1.12, 1.12);
-      ctx.translate(-(x + size/2), -(y + size/2));
+
+    if (v.exploding) {
+      drawExplosion(x + pad, y + pad, size - pad*2, v.t);
+      continue;
     }
+
+    const isSelected = engine.selected && engine.selected[0] === v.ty && engine.selected[1] === v.tx;
+    ctx.save();
+    const cx = x + size/2, cy = y + size/2;
+    let sc = v.scale;
+    if (isSelected) sc *= 1.12;
+    ctx.translate(cx, cy);
+    ctx.scale(sc, sc);
+    ctx.translate(-cx, -cy);
+
     if (tile.stone) {
       drawStone(x + pad, y + pad, size - pad*2);
     } else {
       drawGem(x + pad, y + pad, size - pad*2, tile.type, tile.rainbow);
+      if (tile.bomb) drawBombIcon(x + pad, y + pad, size - pad*2);
       if (tile.hasHeart) drawHeart(x + pad, y + pad, size - pad*2);
       if (tile.locked) drawLock(x + pad, y + pad, size - pad*2);
     }
@@ -986,7 +1129,7 @@ function el(tag, props = {}, children = []) {
 
 function showMap() {
   if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
-  currentEngine = null;
+  if (currentEngine) { currentEngine.stopAnimationLoop(); currentEngine = null; }
   app.innerHTML = '';
   const screen = el('div', { className: 'screen map-screen' });
 
@@ -1067,6 +1210,7 @@ function startDailyChallenge() {
 }
 
 function showGame(level, isDaily = false) {
+  if (currentEngine) currentEngine.stopAnimationLoop();
   app.innerHTML = '';
   currentEngine = new GameEngine(level);
 
@@ -1112,7 +1256,6 @@ function showGame(level, isDaily = false) {
   app.appendChild(screen);
   setupCanvas();
   updateStats();
-  render(currentEngine);
   bindBoardInput();
   scheduleHint();
 }
@@ -1202,23 +1345,18 @@ function scheduleHint() {
   if (hintTimer) clearTimeout(hintTimer);
   hintTimer = setTimeout(() => {
     if (!currentEngine || currentEngine.phase !== 'PLAYING' || currentEngine.isAnimating) {
-      scheduleHint();
-      return;
+      scheduleHint(); return;
     }
     const hint = findHint(currentEngine.grid);
     if (hint) {
       const old = currentEngine.selected;
       currentEngine.selected = hint[0];
-      render(currentEngine);
       setTimeout(() => {
         if (!currentEngine) return;
         currentEngine.selected = old;
-        render(currentEngine);
         scheduleHint();
       }, 1200);
-    } else {
-      scheduleHint();
-    }
+    } else { scheduleHint(); }
   }, 5000);
 }
 
@@ -1259,8 +1397,8 @@ function checkEndAndShowDialogs() {
       title: 'Ходы закончились',
       text: 'Продолжить за монеты или переиграть?',
       buttons: [
-        { label: '↻ +5 ходов', primary: true, onClick: () => { closeDialog(); e.continueWithExtraMoves(5); updateStats(); } },
-        { label: 'Заново', onClick: () => { closeDialog(); e.retry(); updateStats(); render(e); } },
+        { label: '↻ +5 ходов', primary: true, onClick: () => { closeDialog(); e.continueWithExtraMoves(5); } },
+        { label: 'Заново', onClick: () => { closeDialog(); e.retry(); } },
         { label: 'К карте', onClick: () => { closeDialog(); showMap(); } },
       ],
     });
@@ -1274,7 +1412,7 @@ function showPause() {
     text: `Уровень ${currentEngine.level.id}`,
     buttons: [
       { label: 'Продолжить', primary: true, onClick: closeDialog },
-      { label: '🔄 Заново', onClick: () => { closeDialog(); currentEngine.retry(); updateStats(); render(currentEngine); } },
+      { label: '🔄 Заново', onClick: () => { closeDialog(); currentEngine.retry(); } },
       { label: '🗺 К карте', onClick: () => { closeDialog(); showMap(); } },
     ],
   });
@@ -1319,6 +1457,7 @@ function showNewAchievements(list) {
 }
 
 function showAchievements() {
+  if (currentEngine) { currentEngine.stopAnimationLoop(); currentEngine = null; }
   app.innerHTML = '';
   const screen = el('div', { className: 'screen' });
   const header = el('div', { className: 'map-header', style: { padding: '12px 14px 0' } }, [
@@ -1356,10 +1495,7 @@ if ('serviceWorker' in navigator) {
 
 // ===== BOOT =====
 window.addEventListener('resize', () => {
-  if (currentEngine) {
-    setupCanvas();
-    render(currentEngine);
-  }
+  if (currentEngine) { setupCanvas(); render(currentEngine); }
 });
 window.addEventListener('orientationchange', () => {
   setTimeout(() => {
